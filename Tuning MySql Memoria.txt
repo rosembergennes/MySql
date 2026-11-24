@@ -1,0 +1,113 @@
+Tunning rapidinho no mysql
+
+
+[root@Sysbr0 html]# mysql -u root -p -e "SHOW GLOBAL VARIABLES WHERE Variable_name IN ('innodb_buffer_pool_size','innodb_buffer_pool_instances','innodb_flush_method','innodb_io_capacity','tmp_table_size','max_heap_table_size','max_connections','performance_schema');"
+Enter password:
++------------------------------+-----------+
+| Variable_name                | Value     |
++------------------------------+-----------+
+| innodb_buffer_pool_instances | 1         |
+| innodb_buffer_pool_size      | 134217728 |
+| innodb_flush_method          | O_DIRECT  |
+| innodb_io_capacity           | 10000     |
+| max_connections              | 151       |
+| max_heap_table_size          | 16777216  |
+| performance_schema           | ON        |
+| tmp_table_size               | 16777216  |
++------------------------------+-----------+
+[root@Sysbr0 html]#
+
+Atualmente, o MySQL dispõe de apenas 128 MB de buffer pool 
+para armazenar páginas de dados e índices em memória.
+Entretanto, antes de aumentar esse parâmetro, precisamos 
+verificar a memória disponível no servidor.
+
+[root@Sysbr0 html]# free -h
+               total        used        free      shared  buff/cache   available
+Mem:           7,3Gi       1,2Gi       5,1Gi        27Mi       1,2Gi       6,1Gi
+Swap:          7,8Gi          0B       7,8Gi
+[root@Sysbr0 html]#
+
+O servidor Sysbr0 possui 7,3 GB de RAM, com 6,1 GB disponíveis e nenhuma utilização de swap.
+Isso indica que temos margem para aumentar a memória destinada ao MySQL.
+
+
+Recomendo testar inicialmente 2 GB de InnoDB Buffer Pool,
+Comando executado no MySQL:
+
+SET GLOBAL innodb_buffer_pool_size = 2147483648;
+Solicita aumento do buffer pool para 2 GiB
+
+preservando memória para o Apache, PHP-FPM e sistema operacional.
+ 
+ 
+ =========>>>>>>>>>>>>>> Lembrando esse tipo de tunning aconselho realizar em horario fora de pico.
+ 
+ SHOW GLOBAL STATUS LIKE 'Innodb_buffer_pool_resize_status';
+ 
+  ESTATÍSTICAS DO BUFFER POOL
+-----------------------------
+Comando:
+
+SHOW GLOBAL STATUS
+WHERE Variable_name IN (
+    'Innodb_buffer_pool_read_requests',
+    'Innodb_buffer_pool_reads',
+    'Innodb_buffer_pool_pages_total',
+    'Innodb_buffer_pool_pages_data',
+    'Innodb_buffer_pool_pages_free'
+);
+
+==> NÃO ESTA NO VIDEO MAS VALE A DICA 
+IDENTIFICAÇÃO DAS CONSULTAS MAIS CUSTOSAS
+-------------------------------------------
+Comando:
+
+SELECT
+    COUNT_STAR AS execucoes,
+    ROUND(SUM_TIMER_WAIT / 1e12, 2) AS tempo_total_seg,
+    ROUND(AVG_TIMER_WAIT / 1e12, 2) AS tempo_medio_seg,
+    SUM_ROWS_EXAMINED AS linhas_examinadas,
+    LEFT(DIGEST_TEXT, 180) AS consulta
+FROM performance_schema.events_statements_summary_by_digest
+WHERE SCHEMA_NAME = 'sysbr_leads'
+ORDER BY SUM_TIMER_WAIT DESC
+LIMIT 10;
+
+
+=========>>>>>>>>>>>>>> VAMOS VER O DISCO
+
+
+LATÊNCIA E VOLUME DE I/O
+---------------------------
+Comando:
+
+iostat -xz 1 10
+
+O que faz:
+Exibe estatísticas detalhadas dos dispositivos de disco a cada segundo. 
+Olhamos principalmente r/s (IOPS de leitura), rkB/s (taxa de leitura), r_await (latência média por leitura), aqu-sz (fila média) e %util (tempo com I/O em andamento).
+
+Resultados observados no dispositivo sdb durante a consulta:
+- r/s: aproximadamente 2742–2769 leituras/s
+- rkB/s: aproximadamente 43872–44304 KiB/s
+- r_await: aproximadamente 0,30 ms
+- rareq-sz: 16 KiB
+- aqu-sz: aproximadamente 0,83
+- %util: aproximadamente 74%–75%
+- CPU iowait: aproximadamente 41%
+
+Interpretação:
+As leituras individuais tinham latência muito baixa, mas eram numerosas. O resultado sugere investigar a eficiência do acesso aos dados e a pressão de leitura, sem concluir que o disco esteja defeituoso.
+Não verificamos, nesta conversa, o mapeamento definitivo do datadir do MySQL para sdb.
+
+SEGUNDO AUMENTO DO BUFFER POOL
+---------------------------------
+Comando executado no MySQL:
+
+SET GLOBAL innodb_buffer_pool_size = 4294967296;
+
+
+
+
+ 
